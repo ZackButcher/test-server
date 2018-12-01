@@ -18,11 +18,13 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/dustinkirkland/golang-petname"
 	"github.com/spf13/cobra"
 )
 
@@ -38,6 +40,7 @@ type config struct {
 	servingPort, healthCheckPort, livenessPort uint16
 	healthy                                    bool
 	livenessDelay                              time.Duration
+	id string
 }
 
 func main() {
@@ -47,19 +50,27 @@ func main() {
 		Use:   "server",
 		Short: "Starts Mixer as a server",
 		Run: func(cmd *cobra.Command, args []string) {
+			if cfg.id == "" {
+				rand.Seed(time.Now().UTC().UnixNano())
+				cfg.id = petname.Generate(2, "-")
+				log.Printf("no ID provided at startup, picking a random one")
+			}
+			log.Printf("starting with ID: %v", cfg.id)
+			log.SetPrefix(fmt.Sprintf("%s ", cfg.id))
+
 			servers := map[uint16]*http.ServeMux{
 				cfg.servingPort:     http.NewServeMux(),
 				cfg.healthCheckPort: http.NewServeMux(),
 				cfg.livenessPort:    http.NewServeMux(),
 			}
 
-			servers[cfg.servingPort].HandleFunc(echoPath, echo)
-			servers[cfg.servingPort].HandleFunc(callPath, call)
-			servers[cfg.healthCheckPort].HandleFunc(healthPath, health(cfg.healthy))
-			servers[cfg.livenessPort].HandleFunc(livePath, live(cfg.livenessDelay))
+			servers[cfg.servingPort].HandleFunc(echoPath, cfg.echo)
+			servers[cfg.servingPort].HandleFunc(callPath, cfg.call)
+			servers[cfg.healthCheckPort].HandleFunc(healthPath, cfg.health(cfg.healthy))
+			servers[cfg.livenessPort].HandleFunc(livePath, cfg.live(cfg.livenessDelay))
 			// For each of the servers, wire up a default handler so we can respond to any URL
 			for _, server := range servers {
-				server.HandleFunc("/", catchall)
+				server.HandleFunc("/", cfg.catchall)
 			}
 
 			log.Printf("listening for:\n/echo:     %d\n/health:   %d\n/liveness: %d\n", cfg.servingPort, cfg.healthCheckPort, cfg.livenessPort)
@@ -88,6 +99,7 @@ func main() {
 	root.PersistentFlags().Uint16VarP(&cfg.livenessPort, "liveness-port", "l", defaultPort, "Port to serve liveness checks on; always on /live")
 	root.PersistentFlags().BoolVar(&cfg.healthy, "healthy", true, "If false, the health check will report unhealthy")
 	root.PersistentFlags().DurationVar(&cfg.livenessDelay, "liveness-delay", time.Second, "Delay before the server reports being alive")
+	root.PersistentFlags().StringVar(&cfg.id, "id", "", "Name that identifies this instance (the ID is returned as part of the response)")
 
 	if err := root.Execute(); err != nil {
 		log.Printf("%v\n", err)
@@ -95,67 +107,76 @@ func main() {
 	}
 }
 
-func live(delay time.Duration) func(w http.ResponseWriter, r *http.Request) {
+func (cfg config) live(delay time.Duration) func(w http.ResponseWriter, r *http.Request) {
 	live := time.Now().Add(delay)
 	log.Printf("will be live at %v given delay %v\n", live, delay)
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("got liveness request with headers:     %v\n", r.Header)
 		if time.Now().After(live) {
-			w.Write([]byte("live"))
+			fmt.Fprintf(w, "%s - live", cfg.id)
 		} else {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
 	}
 }
 
-func health(healthy bool) func(w http.ResponseWriter, r *http.Request) {
+func (cfg config) health(healthy bool) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("got health check request with headers: %v\n", r.Header)
 		if healthy {
-			w.Write([]byte("healthy"))
+			fmt.Fprintf(w, "%s - healthy", cfg.id)
 		} else {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
 	}
 }
 
-func echo(w http.ResponseWriter, r *http.Request) {
+func (cfg config) echo(w http.ResponseWriter, r *http.Request) {
 	log.Printf("got echo request with headers:         %v\n", r.Header)
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("got err reading body: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 	}
-	w.Write(body)
+	fmt.Fprintf(w, "%s echoing: %s", cfg.id, body)
 }
 
-func call(w http.ResponseWriter, r *http.Request) {
+func (cfg config) call(w http.ResponseWriter, r *http.Request) {
 	log.Printf("got call request with headers: %v", r.Header)
-	target, err := ioutil.ReadAll(r.Body)
+	t, err := ioutil.ReadAll(r.Body)
 	defer r.Body.Close()
 	if err != nil {
 		log.Printf("got err reading body: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	target := string(t)
+
 	log.Printf("got call target: %q", target)
-	resp, err := http.Get(fmt.Sprintf("%s", target))
+	resp, err := http.Get(target)
 	if err != nil {
-		fmt.Fprintf(w, "GET %q failed: %v", fmt.Sprintf("%s", target), err)
+		fmt.Fprintf(w, "%s GET %q failed: %v", cfg.id, target, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	b, err := ioutil.ReadAll(resp.Body)
+	defer resp.Body.Close()
+	body := string(b)
+	if err != nil {
+		body = fmt.Sprintf("could not reading body: %v", err)
+	}
+
 	log.Printf("GET %q succeeded with response code %v", target, resp.StatusCode)
-	fmt.Fprintf(w, "got response: %v", resp)
+	fmt.Fprintf(w, "%s got response: %v\nwith body: %s", cfg.id, resp, body)
 }
 
-func catchall(w http.ResponseWriter, r *http.Request) {
+func (cfg config) catchall(w http.ResponseWriter, r *http.Request) {
 	log.Printf("got catch-all request with headers:    %v\n", r.Header)
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
-	w.Write([]byte(fmt.Sprintf("default handler echoing: %q", body)))
+	fmt.Fprintf(w, "%s default handler echoing: %q", cfg.id, body)
 }
 
 func toAddress(port uint16) string {

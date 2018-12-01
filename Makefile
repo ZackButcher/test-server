@@ -13,6 +13,7 @@
 ## limitations under the License.
 
 HUB := zackbutcher
+TAG := v0.1
 
 ISTIO_HUB := gcr.io/google.com/zbutcher-test
 ISTIO_TAG := 6e646bb0accd3a7b3beac52f2bd402d39f861108
@@ -33,13 +34,13 @@ test-server.linux:
 ##### Docker
 
 docker.build: test-server.linux
-	docker build -t ${HUB}/test-server -f Dockerfile .
+	docker build -t ${HUB}/test-server:${TAG} -f Dockerfile .
 
 docker.run: docker.build
-	docker run ${HUB}/test-server
+	docker run ${HUB}/test-server:${TAG}
 
 docker.push: docker.build
-	docker push ${HUB}/test-server
+	docker push ${HUB}/test-server:${TAG}
 
 ##### Kube Deploy
 
