@@ -21,11 +21,13 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/dustinkirkland/golang-petname"
+	petname "github.com/dustinkirkland/golang-petname"
 	"github.com/spf13/cobra"
+	text "github.com/tonnerre/golang-text"
 )
 
 const (
@@ -40,7 +42,7 @@ type config struct {
 	servingPort, healthCheckPort, livenessPort uint16
 	healthy                                    bool
 	livenessDelay                              time.Duration
-	id string
+	id                                         string
 }
 
 func main() {
@@ -142,15 +144,24 @@ func (cfg config) echo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg config) call(w http.ResponseWriter, r *http.Request) {
-	log.Printf("got call request with headers: %v", r.Header)
-	t, err := ioutil.ReadAll(r.Body)
-	defer r.Body.Close()
-	if err != nil {
-		log.Printf("got err reading body: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+	log.Printf("got call request with URL %q and headers: %v", r.URL, r.Header)
+
+	target := ""
+	targets, ok := r.URL.Query()["target"]
+	if ok && len(targets) > 0 && targets[0] != "" {
+		target = targets[0]
+		log.Printf("Found target in URI, using %q", target)
+	} else {
+		t, err := ioutil.ReadAll(r.Body)
+		defer r.Body.Close()
+		if err != nil {
+			log.Printf("got err reading body: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		target = strings.TrimSpace(string(t))
+		log.Printf("Found target in request body, using %q", target)
 	}
-	target := string(t)
 
 	log.Printf("got call target: %q", target)
 	resp, err := http.Get(target)
@@ -167,7 +178,19 @@ func (cfg config) call(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("GET %q succeeded with response code %v", target, resp.StatusCode)
-	fmt.Fprintf(w, "%s got response: %v\nwith body: %s", cfg.id, resp, body)
+
+	fmt.Fprintf(w, `
+Server:
+	%s
+Called:
+	%s
+Status Code:
+	%v
+Response:
+%s`, cfg.id, target, resp.StatusCode, text.Indent(body, "\t"))
+
+	//fmt.Fprintf(w, "Server:\n\t%s\nCalled:\n\t%s\nStatus Code:\n\t%v\nResponse:\n%s", cfg.id, target, resp.StatusCode, text.Indent(body, "\t"))
+	//fmt.Fprintf(w, "%s got response: %v\nwith body: %s", cfg.id, resp, body)
 }
 
 func (cfg config) catchall(w http.ResponseWriter, r *http.Request) {
