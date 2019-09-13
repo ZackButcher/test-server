@@ -159,8 +159,20 @@ func (cfg config) call(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		target = strings.TrimSpace(string(t))
+		target = string(t)
 		log.Printf("Found target in request body, using %q", target)
+	}
+	target = strings.TrimSpace(target)
+	if len(target) == 0 {
+		log.Printf("empty target, aborting call")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "No target to call - use the ?target query parameter or pass a URL as the request body.")
+		return
+	}
+
+	if !strings.HasPrefix(target, "http") {
+		log.Print("Prefixing target with 'http://'")
+		target = "http://" + target
 	}
 
 	log.Printf("got call target: %q", target)
@@ -179,14 +191,13 @@ func (cfg config) call(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("GET %q succeeded with response code %v", target, resp.StatusCode)
 
-	fmt.Fprintf(w, `
-Server:
+	fmt.Fprintf(w, `Server:
 	%s
 Called:
 	%s
-Status Code:
+Response Status Code:
 	%v
-Response:
+Response Body:
 %s`, cfg.id, target, resp.StatusCode, text.Indent(body, "\t"))
 
 	//fmt.Fprintf(w, "Server:\n\t%s\nCalled:\n\t%s\nStatus Code:\n\t%v\nResponse:\n%s", cfg.id, target, resp.StatusCode, text.Indent(body, "\t"))

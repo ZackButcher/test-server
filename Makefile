@@ -19,7 +19,7 @@ ISTIO_HUB := gcr.io/google.com/zbutcher-test
 ISTIO_TAG := 6e646bb0accd3a7b3beac52f2bd402d39f861108
 
 SHELL := /bin/zsh
-ISTIO_DIR := ./istio-0.8.0
+ISTIO_DIR := ./istio-1.2.5
 
 default: build
 
@@ -45,18 +45,11 @@ docker.push: docker.build
 ##### Kube Deploy
 
 deploy:
-	kubectl apply -f <( \
-	  ${ISTIO_DIR}/bin/istioctl kube-inject --hub=${ISTIO_HUB} --tag=${ISTIO_TAG} -f kubernetes/deployment.yaml | \
-	  sed -e "s,${ISTIO_HUB}/proxy:,${ISTIO_HUB}/proxyv2:,g")
-	kubectl apply -f <( \
-	  ${ISTIO_DIR}/bin/istioctl kube-inject --hub=${ISTIO_HUB} --tag=${ISTIO_TAG} -f kubernetes/deployment-v2.yaml | \
-	  sed -e "s,${ISTIO_HUB}/proxy:,${ISTIO_HUB}/proxyv2:,g")
-	kubectl apply -f kubernetes/service.yaml
-	kubectl apply -f kubernetes/service-v2.yaml
-	kubectl apply -f kubernetes/ingress.yaml
+	kubectl label namespace default istio-injection=enabled || true
+	kubectl apply -f kubernetes/
 
 deploy.istio:
-	kubectl apply -f ${ISTIO_DIR}/install/kubernetes/istio.yaml
+	kubectl apply -f ${ISTIO_DIR}/install/kubernetes/istio-demo.yaml
 
 deploy-all: deploy.istio deploy
 
@@ -66,6 +59,6 @@ remove:
 	kubectl delete -f kubernetes/ || true
 
 remove.istio:
-	kubectl delete -f ${ISTIO_DIR}/install/kubernetes/istio.yaml || true
+	kubectl delete -f ${ISTIO_DIR}/install/kubernetes/istio-demo.yaml
 
 remove-all: remove remove.istio

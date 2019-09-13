@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: test-server
-        image: zackbutcher/test-server
+        image: zackbutcher/test-server:v0.1
         imagePullPolicy: Always
         ports:
         - containerPort: 80
